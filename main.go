@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"image/color"
 	"log"
-	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -17,237 +18,74 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-const (
-	hostname = "127.0.0.1"
-	port     = 3000
-)
+const defaultListenAddr = "127.0.0.1:3000"
 
-var globalLogArea *widget.Entry
+// configMu protects concurrent access to the shared AppConfig.
+var configMu sync.RWMutex
 
+// ServerConfig holds the webhook URL and username for Discord notifications.
 type ServerConfig struct {
 	WebhookURL string
 	Username   string
 }
 
-/*
-func main() {
-	config, err := loadConfiguration()
-	if err != nil {
-		log.Printf("Unable to load configuration: %v. Using default values.", err)
-		config = &AppConfig{
-			Port:       3000,
-			FileFormat: "txt",
-		}
-	}
-
-	appInstance := app.New()
-	w := appInstance.NewWindow("Discord Notifier")
-
-	var statusLabel *widget.Label
-	var startButton, stopButton *widget.Button
-	var webhookEntry, usernameEntry *widget.Entry
-	var serverRunning bool
-
-	// Server Configuration
-	serverConfig := &ServerConfig{}
-
-	// Set up the UI elements
-	webhookEntry = widget.NewEntry()
-	webhookEntry.PlaceHolder = "Discord Webhook URL"
-	webhookEntry.Text = config.WebhookURL
-
-	usernameEntry = widget.NewEntry()
-	usernameEntry.PlaceHolder = "Username (for pinging)"
-	usernameEntry.Text = config.Username
-
-	startButton = widget.NewButton("Start Server", func() {
-		serverConfig.WebhookURL = webhookEntry.Text
-		serverConfig.Username = usernameEntry.Text
-
-		if serverConfig.WebhookURL == "" {
-			dialog.ShowError(errors.New("Please input the Discord webhook URL"), w)
-			return
-		}
-
-		if !serverRunning {
-			// Save configuration
-			config.WebhookURL = serverConfig.WebhookURL
-			config.Username = serverConfig.Username
-			saveConfiguration(config)
-
-			go startServer(serverConfig)
-			serverRunning = true
-			statusLabel.SetText("Server Status: Running")
-		} else {
-			dialog.ShowInformation("Server Already Running", "The server is already running!", w)
-		}
-	})
-
-	stopButton = widget.NewButton("Stop Server", func() {
-		if serverRunning {
-			serverShutdown()
-			serverRunning = false
-			statusLabel.SetText("Server Status: Stopped")
-		} else {
-			dialog.ShowInformation("Server Not Running", "The server isn't running!", w)
-		}
-	})
-
-	statusLabel = widget.NewLabel("Server Status: Stopped")
-
-	content := container.NewVBox(
-		widget.NewLabel("Enter the Discord Webhook URL:"),
-		webhookEntry,
-		widget.NewLabel("Enter the username for pinging:"),
-		usernameEntry,
-		container.NewHBox(startButton, stopButton),
-		statusLabel,
-	)
-
-	w.SetContent(content)
-	w.Resize(fyne.Size{Width: 600, Height: 300})
-	w.CenterOnScreen()
-	w.ShowAndRun()
-}
-*/
-
-/*
-func main() {
-	log.Println("Application started.")
-
-	config, err := loadConfiguration()
-	if err != nil {
-		log.Printf("Unable to load configuration: %v. Using default values.", err)
-		config = &AppConfig{
-			Port:       3000,
-			FileFormat: "txt",
-		}
-	} else {
-		log.Println("Configuration loaded successfully.")
-	}
-
-	appInstance := app.New()
-	w := appInstance.NewWindow("Discord Notifier")
-	log.Println("Main application window created.")
-
-	var statusLabel *widget.Label
-	var startButton, stopButton *widget.Button
-	var webhookEntry, usernameEntry *widget.Entry
-	var serverRunning bool
-
-	// Server Configuration
-	serverConfig := &ServerConfig{}
-	log.Println("Server configuration initialized.")
-
-	// Set up the UI elements
-	webhookEntry = widget.NewEntry()
-	webhookEntry.PlaceHolder = "Discord Webhook URL"
-	webhookEntry.Text = config.WebhookURL
-	log.Println("Webhook entry field created.")
-
-	usernameEntry = widget.NewEntry()
-	usernameEntry.PlaceHolder = "Username (for pinging)"
-	usernameEntry.Text = config.Username
-	log.Println("Username entry field created.")
-
-	// Checkbox for auto start
-	autoStartCheck := widget.NewCheck("Auto Start Server", func(checked bool) {
-		config.AutoStart = checked
-		saveConfiguration(config)
-		if checked {
-			log.Println("Auto Start Server option enabled.")
-		} else {
-			log.Println("Auto Start Server option disabled.")
-		}
-	})
-	autoStartCheck.SetChecked(config.AutoStart)
-	log.Println("Auto start checkbox added to UI.")
-
-	// Buttons and labels (same as your existing code)
-	startButton = widget.NewButton("Start Server", func() {
-
-		log.Println("Start Server button clicked.")
-		serverConfig.WebhookURL = webhookEntry.Text
-		serverConfig.Username = usernameEntry.Text
-
-		if serverConfig.WebhookURL == "" {
-			dialog.ShowError(errors.New("Please input the Discord webhook URL"), w)
-			log.Println("Error: Discord webhook URL is empty.")
-			return
-		}
-
-		if !serverRunning {
-			log.Println("Starting server...")
-			// Save configuration
-			config.WebhookURL = serverConfig.WebhookURL
-			config.Username = serverConfig.Username
-			saveConfiguration(config)
-			log.Println("Configuration saved.")
-
-			go startServer(serverConfig)
-			serverRunning = true
-			statusLabel.SetText("Server Status: Running")
-			log.Println("Server started successfully.")
-		} else {
-			dialog.ShowInformation("Server Already Running", "The server is already running!", w)
-			log.Println("Server start attempted but already running.")
-		}
-	})
-
-	stopButton = widget.NewButton("Stop Server", func() {
-		log.Println("Stop Server button clicked.")
-		if serverRunning {
-			log.Println("Stopping server...")
-			serverShutdown()
-			serverRunning = false
-			statusLabel.SetText("Server Status: Stopped")
-			log.Println("Server stopped successfully.")
-		} else {
-			dialog.ShowInformation("Server Not Running", "The server isn't running!", w)
-			log.Println("Stop server attempted but server was not running.")
-		}
-	})
-
-	statusLabel = widget.NewLabel("Server Status: Stopped")
-	log.Println("Status label initialized.")
-
-	content := container.NewVBox(
-		webhookEntry,
-		usernameEntry,
-		autoStartCheck, // Add the checkbox to the layout
-		startButton,
-		stopButton,
-		statusLabel,
-	)
-	log.Println("UI layout set up.")
-
-	w.SetContent(content)
-
-	// Automatically start server if AutoStart is enabled
-	if config.AutoStart {
-		log.Println("Auto start is enabled; starting server automatically.")
-		go startServer(serverConfig)
-		serverRunning = true
-		statusLabel.SetText("Server Status: Running")
-		log.Println("Server started automatically.")
-	}
-
-	w.ShowAndRun()
-	log.Println("Application window is now running.")
-}
-*/
-
+// AppConfig holds the application configuration including Discord settings,
+// file logging options, HTTP forwarding, and server parameters.
 type AppConfig struct {
-	WebhookURL      string
-	DiscordID       string
-	UserReplacer    map[string]string
-	AutoStart       bool
-	Path            string
-	EnableDiscord   bool
-	EnableLocalSave bool
-	Port            int
-	FileFormat      string
-	DebugMode       bool
+	WebhookURL        string
+	DiscordID         string
+	UserReplacer      map[string]string
+	AutoStart         bool
+	Path              string
+	EnableDiscord     bool
+	EnableLocalSave   bool
+	EnableHTTPForward bool
+	ForwardURL        string
+	ForwardScene      string
+	ListenAddr        string
+	FileFormat        string
+	DebugMode         bool
+}
+
+// widgetLogger implements the Logger interface using a Fyne widget.Entry.
+type widgetLogger struct {
+	logArea   *widget.Entry
+	debugMode atomic.Bool
+}
+
+// Log writes a timestamped, level-tagged message to the UI log area.
+func (l *widgetLogger) Log(level, message string) {
+	if l == nil || l.logArea == nil {
+		return
+	}
+	if !l.debugMode.Load() && level == "debug" {
+		return
+	}
+
+	timestamp := time.Now().Format("15:04:05")
+	levelTag := ""
+	switch level {
+	case "error":
+		levelTag = "[ERROR] "
+	case "warning":
+		levelTag = "[WARNING] "
+	case "info":
+		levelTag = "[INFO] "
+	case "debug":
+		levelTag = "[DEBUG] "
+	}
+
+	logLine := fmt.Sprintf("[%s] %s%s\n", timestamp, levelTag, message)
+	fyne.Do(func() {
+		newText := l.logArea.Text + logLine
+		l.logArea.SetText(newText)
+		l.logArea.CursorRow = len(strings.Split(newText, "\n")) - 1
+	})
+}
+
+// SetDebugMode updates whether debug-level messages are shown.
+func (l *widgetLogger) SetDebugMode(enabled bool) {
+	l.debugMode.Store(enabled)
 }
 
 func main() {
@@ -255,19 +93,17 @@ func main() {
 	if err != nil {
 		log.Printf("Unable to load configuration: %v. Using default values.", err)
 		config = &AppConfig{
-			Port:       3000,
+			ListenAddr: defaultListenAddr,
 			FileFormat: "txt",
 		}
 	}
 
-	if config.Port == 0 {
-		config.Port = 3000
+	if config.ListenAddr == "" {
+		config.ListenAddr = defaultListenAddr
 	}
 	if config.FileFormat == "" {
 		config.FileFormat = "txt"
 	}
-	
-	globalConfig = config
 
 	appInstance := app.New()
 	w := appInstance.NewWindow("Discord Notifier")
@@ -275,10 +111,10 @@ func main() {
 	var statusLabel *widget.Label
 	var startButton, stopButton *widget.Button
 	var webhookEntry, usernameEntry, discordIDEntry, pathEntry *widget.Entry
-	var portEntry *widget.Entry
+	var addrEntry *widget.Entry
 	var fileFormatSelect *widget.Select
-	var discordContainer, localSaveContainer *fyne.Container
-	var logTextArea *widget.Entry
+	var discordContainer, localSaveContainer, httpForwardContainer *fyne.Container
+	var forwardURLEntry, forwardSceneEntry *widget.Entry
 	var serverRunning bool
 
 	webhookEntry = widget.NewEntry()
@@ -297,13 +133,14 @@ func main() {
 	pathEntry.PlaceHolder = "Path to save log files"
 	pathEntry.Text = config.Path
 
-	portEntry = widget.NewEntry()
-	portEntry.PlaceHolder = "Port number"
-	portEntry.Text = fmt.Sprintf("%d", config.Port)
-	portEntry.Resize(fyne.NewSize(400, portEntry.Size().Height))
+	addrEntry = widget.NewEntry()
+	addrEntry.PlaceHolder = "127.0.0.1:3000"
+	addrEntry.Text = config.ListenAddr
 
 	fileFormatSelect = widget.NewSelect([]string{"txt", "docx"}, func(value string) {
+		configMu.Lock()
 		config.FileFormat = value
+		configMu.Unlock()
 		saveConfiguration(config)
 	})
 	fileFormatSelect.SetSelected(config.FileFormat)
@@ -324,7 +161,9 @@ func main() {
 				return
 			}
 			pathEntry.SetText(uri.Path())
+			configMu.Lock()
 			config.Path = uri.Path()
+			configMu.Unlock()
 			saveConfiguration(config)
 		}, w)
 	})
@@ -347,7 +186,9 @@ func main() {
 	localSaveContainer.Hide()
 
 	enableDiscordCheck := widget.NewCheck("Enable Discord notifications", func(checked bool) {
+		configMu.Lock()
 		config.EnableDiscord = checked
+		configMu.Unlock()
 		if checked {
 			discordContainer.Show()
 		} else {
@@ -361,7 +202,9 @@ func main() {
 	}
 
 	enableLocalSaveCheck := widget.NewCheck("Enable file logging", func(checked bool) {
+		configMu.Lock()
 		config.EnableLocalSave = checked
+		configMu.Unlock()
 		if checked {
 			localSaveContainer.Show()
 		} else {
@@ -374,78 +217,139 @@ func main() {
 		localSaveContainer.Show()
 	}
 
+	forwardURLEntry = widget.NewEntry()
+	forwardURLEntry.PlaceHolder = "http://127.0.0.1:8080/endpoint"
+	forwardURLEntry.Text = config.ForwardURL
+
+	forwardSceneEntry = widget.NewEntry()
+	forwardSceneEntry.PlaceHolder = "Scene name"
+	forwardSceneEntry.Text = config.ForwardScene
+
+	httpForwardContainer = container.NewVBox(
+		widget.NewLabel("Forward URL:"),
+		forwardURLEntry,
+		widget.NewLabel("Scene:"),
+		forwardSceneEntry,
+	)
+	httpForwardContainer.Hide()
+
+	enableHTTPForwardCheck := widget.NewCheck("Enable HTTP forwarding", func(checked bool) {
+		configMu.Lock()
+		config.EnableHTTPForward = checked
+		configMu.Unlock()
+		if checked {
+			httpForwardContainer.Show()
+		} else {
+			httpForwardContainer.Hide()
+		}
+		saveConfiguration(config)
+	})
+	enableHTTPForwardCheck.SetChecked(config.EnableHTTPForward)
+	if config.EnableHTTPForward {
+		httpForwardContainer.Show()
+	}
+
 	autoStartCheck := widget.NewCheck("Auto Start Server", func(checked bool) {
+		configMu.Lock()
 		config.AutoStart = checked
+		configMu.Unlock()
 		saveConfiguration(config)
 	})
 	autoStartCheck.SetChecked(config.AutoStart)
 
+	// Create log area and logger
+	logTextArea := widget.NewEntry()
+	logTextArea.MultiLine = true
+	logTextArea.Wrapping = fyne.TextWrapWord
+	logTextArea.SetText("Server logs will appear here...\n")
+	logTextArea.Disable()
+	logTextArea.Resize(fyne.NewSize(580, 150))
+
+	logger := &widgetLogger{logArea: logTextArea}
+	logger.SetDebugMode(config.DebugMode)
+
 	debugCheck := widget.NewCheck("Debug mode (show all logs)", func(checked bool) {
+		configMu.Lock()
 		config.DebugMode = checked
+		configMu.Unlock()
+		logger.SetDebugMode(checked)
 		saveConfiguration(config)
 		if checked {
-			appendToLiveLogWithLevel(logTextArea, "info", "Debug mode enabled - showing all logs")
+			logger.Log("info", "Debug mode enabled - showing all logs")
 		} else {
-			appendToLiveLogWithLevel(logTextArea, "info", "Debug mode disabled - showing only warnings and errors")
+			logger.Log("info", "Debug mode disabled - showing only warnings and errors")
 		}
 	})
 	debugCheck.SetChecked(config.DebugMode)
 
 	startButton = widget.NewButton("Start Server", func() {
-		portNum, err := strconv.Atoi(portEntry.Text)
-		if err != nil || portNum < 1024 || portNum > 65535 {
-			dialog.ShowError(errors.New("Please enter a valid port number (1024-65535)"), w)
+		addr := strings.TrimSpace(addrEntry.Text)
+		if addr == "" {
+			dialog.ShowError(errors.New("Please enter a listen address (e.g. 127.0.0.1:3000)"), w)
 			return
 		}
-		config.Port = portNum
 
+		configMu.Lock()
+		config.ListenAddr = addr
 		if config.EnableDiscord {
 			config.WebhookURL = webhookEntry.Text
 			config.DiscordID = discordIDEntry.Text
 			config.UserReplacer = parseUsernameEntry(usernameEntry.Text, config.DiscordID)
-
-			if config.WebhookURL == "" {
-				dialog.ShowError(errors.New("Please input the Discord webhook URL"), w)
-				return
-			}
 		}
-
 		if config.EnableLocalSave {
 			config.Path = pathEntry.Text
-			if config.Path == "" {
-				dialog.ShowError(errors.New("Please input the path for saving log files"), w)
-				return
-			}
+		}
+		if config.EnableHTTPForward {
+			config.ForwardURL = forwardURLEntry.Text
+			config.ForwardScene = forwardSceneEntry.Text
+		}
+		configMu.Unlock()
+
+		if config.EnableDiscord && config.WebhookURL == "" {
+			dialog.ShowError(errors.New("Please input the Discord webhook URL"), w)
+			return
 		}
 
-		if !config.EnableDiscord && !config.EnableLocalSave {
-			dialog.ShowError(errors.New("Please enable at least one output option (Discord or File logging)"), w)
+		if config.EnableLocalSave && config.Path == "" {
+			dialog.ShowError(errors.New("Please input the path for saving log files"), w)
+			return
+		}
+
+		if config.EnableHTTPForward && config.ForwardURL == "" {
+			dialog.ShowError(errors.New("Please input the HTTP forward URL"), w)
+			return
+		}
+
+		if !config.EnableDiscord && !config.EnableLocalSave && !config.EnableHTTPForward {
+			dialog.ShowError(errors.New("Please enable at least one output option (Discord, File logging, or HTTP forwarding)"), w)
 			return
 		}
 
 		if !serverRunning {
 			saveConfiguration(config)
-			appendToLiveLogWithLevel(logTextArea, "info", "Starting server...")
-			go startServer(config)
+			logger.Log("info", "Starting server...")
+			go startServer(config, logger)
 			serverRunning = true
 			statusLabel.SetText("Server Status: Running")
-			appendToLiveLogWithLevel(logTextArea, "info", fmt.Sprintf("Server started on port %d", config.Port))
+			logger.Log("info", fmt.Sprintf("Server started on %s", config.ListenAddr))
 		} else {
 			dialog.ShowInformation("Server Already Running", "The server is already running!", w)
-			appendToLiveLogWithLevel(logTextArea, "warning", "Attempted to start already running server")
+			logger.Log("warning", "Attempted to start already running server")
 		}
 	})
 
 	stopButton = widget.NewButton("Stop Server", func() {
 		if serverRunning {
-			appendToLiveLogWithLevel(logTextArea, "info", "Stopping server...")
-			serverShutdown()
+			logger.Log("info", "Stopping server...")
+			if err := serverShutdown(); err != nil {
+				logger.Log("error", fmt.Sprintf("Shutdown error: %v", err))
+			}
 			serverRunning = false
 			statusLabel.SetText("Server Status: Stopped")
-			appendToLiveLogWithLevel(logTextArea, "info", "Server stopped")
+			logger.Log("info", "Server stopped")
 		} else {
 			dialog.ShowInformation("Server Not Running", "The server isn't running!", w)
-			appendToLiveLogWithLevel(logTextArea, "warning", "Attempted to stop server that wasn't running")
+			logger.Log("warning", "Attempted to stop server that wasn't running")
 		}
 	})
 
@@ -453,33 +357,26 @@ func main() {
 
 	statusLabel = widget.NewLabel("Server Status: Stopped")
 
-	logTextArea = widget.NewEntry()
-	logTextArea.MultiLine = true
-	logTextArea.Wrapping = fyne.TextWrapWord
-	logTextArea.SetText("Server logs will appear here...\n")
-	logTextArea.Disable()
-	logTextArea.Resize(fyne.NewSize(580, 150))
-	globalLogArea = logTextArea
-	
 	logScroll := container.NewScroll(logTextArea)
 	logScroll.SetMinSize(fyne.NewSize(580, 150))
 	logContainer := container.NewBorder(widget.NewLabel("Live Server Logs:"), nil, nil, nil, logScroll)
 
-	portContainer := container.NewHBox(
-		widget.NewLabel("Server Port:"),
-		container.NewWithoutLayout(portEntry),
+	addrContainer := container.NewVBox(
+		widget.NewLabel("Listen Address:"),
+		addrEntry,
 	)
-	portEntry.Resize(fyne.NewSize(60, 36))
-	portEntry.Move(fyne.NewPos(0, 0))
 
 	separator1 := canvas.NewLine(color.Gray{Y: 128})
 	separator1.Resize(fyne.NewSize(500, 1))
-	
+
 	separator2 := canvas.NewLine(color.Gray{Y: 128})
 	separator2.Resize(fyne.NewSize(500, 1))
 
 	separator3 := canvas.NewLine(color.Gray{Y: 128})
 	separator3.Resize(fyne.NewSize(500, 1))
+
+	separator4 := canvas.NewLine(color.Gray{Y: 128})
+	separator4.Resize(fyne.NewSize(500, 1))
 
 	content := container.NewVBox(
 		enableDiscordCheck,
@@ -488,19 +385,22 @@ func main() {
 		enableLocalSaveCheck,
 		localSaveContainer,
 		separator2,
+		enableHTTPForwardCheck,
+		httpForwardContainer,
+		separator3,
 		autoStartCheck,
 		debugCheck,
-		portContainer,
+		addrContainer,
 		buttons,
 		statusLabel,
-		separator3,
+		separator4,
 		logContainer,
 	)
 
 	w.SetContent(content)
 
 	if config.AutoStart {
-		go startServer(config)
+		go startServer(config, logger)
 		serverRunning = true
 		statusLabel.SetText("Server Status: Running")
 	}
@@ -509,37 +409,8 @@ func main() {
 	w.ShowAndRun()
 }
 
-func appendToLiveLog(logArea *widget.Entry, message string) {
-	appendToLiveLogWithLevel(logArea, "info", message)
-}
-
-func appendToLiveLogWithLevel(logArea *widget.Entry, level, message string) {
-	if !globalConfig.DebugMode && level == "debug" {
-		return
-	}
-	
-	timestamp := time.Now().Format("15:04:05")
-	levelTag := ""
-	switch level {
-	case "error":
-		levelTag = "[ERROR] "
-	case "warning":
-		levelTag = "[WARNING] "
-	case "info":
-		levelTag = "[INFO] "
-	case "debug":
-		levelTag = "[DEBUG] "
-	}
-	
-	logLine := fmt.Sprintf("[%s] %s%s\n", timestamp, levelTag, message)
-	currentText := logArea.Text
-	newText := currentText + logLine
-	logArea.SetText(newText)
-	logArea.CursorRow = len(strings.Split(newText, "\n")) - 1
-}
-
-var globalConfig *AppConfig
-
+// parseUsernameEntry splits a comma-separated list of usernames
+// and maps each to the given Discord user ID.
 func parseUsernameEntry(entry, discordID string) map[string]string {
 	replacer := make(map[string]string)
 	entries := strings.Split(entry, ",")
@@ -553,6 +424,7 @@ func parseUsernameEntry(entry, discordID string) map[string]string {
 	return replacer
 }
 
+// mapKeys returns the keys of a string map as a slice.
 func mapKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

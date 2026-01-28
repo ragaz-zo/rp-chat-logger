@@ -6,76 +6,124 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
-var server *http.Server
+// Logger defines the interface for application-level logging.
+type Logger interface {
+	Log(level, message string)
+}
 
-func startServer(config *AppConfig) {
-	http.DefaultServeMux = new(http.ServeMux)
-	http.HandleFunc("/message", createHandler(config))
+var (
+	server   *http.Server
+	serverMu sync.Mutex
+	serverWg sync.WaitGroup
+)
 
-	addr := fmt.Sprintf("%s:%d", hostname, config.Port)
+// startServer creates and starts the HTTP server on the configured address.
+// It registers the /message endpoint and blocks until the server is shut down.
+func startServer(config *AppConfig, logger Logger) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/message", createHandler(config, logger))
+
+	addr := config.ListenAddr
 	log.Printf("Server started at http://%s/", addr)
 
+	serverMu.Lock()
 	server = &http.Server{
-		Addr: addr,
+		Addr:    addr,
+		Handler: mux,
 	}
+	serverMu.Unlock()
+
+	serverWg.Add(1)
+	defer serverWg.Done()
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Could not listen on %s: %v\n", addr, err)
-	}
-}
-
-func serverShutdown() {
-	if server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			log.Fatalf("Server Shutdown Failed:%+v", err)
+		log.Printf("Could not listen on %s: %v", addr, err)
+		if logger != nil {
+			logger.Log("error", fmt.Sprintf("Server failed: %v", err))
 		}
-		log.Println("Server stopped.")
 	}
 }
 
-func createHandler(config *AppConfig) http.HandlerFunc {
+// serverShutdown gracefully shuts down the HTTP server with a 5-second timeout.
+func serverShutdown() error {
+	serverMu.Lock()
+	srv := server
+	serverMu.Unlock()
+
+	if srv == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutting down server: %w", err)
+	}
+
+	serverWg.Wait()
+	log.Println("Server stopped.")
+	return nil
+}
+
+// createHandler returns an HTTP handler that processes incoming chat messages
+// and routes them to Discord and/or local file logging based on the config.
+func createHandler(config *AppConfig, logger Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		// Snapshot config under read lock to avoid races with UI writes.
+		configMu.RLock()
+		cfg := *config
+		configMu.RUnlock()
+
 		sender, message := parseMessage(r)
 		if message != "" {
 			logMessage := fmt.Sprintf("Received message from %s: %s", sender, message)
-			if globalLogArea != nil {
-				appendToLiveLogWithLevel(globalLogArea, "debug", logMessage)
+			if logger != nil {
+				logger.Log("debug", logMessage)
 			}
-			
-			if config.EnableDiscord {
-				err := sendToDiscord(config.WebhookURL, config.DiscordID, sender, message)
+
+			if cfg.EnableDiscord {
+				err := sendToDiscord(ctx, cfg.WebhookURL, cfg.DiscordID, sender, message)
 				if err != nil {
 					log.Printf("Failed to send message to Discord: %v", err)
-					errorMsg := fmt.Sprintf("Failed to send to Discord: %v", err)
-					if globalLogArea != nil {
-						appendToLiveLogWithLevel(globalLogArea, "error", errorMsg)
+					if logger != nil {
+						logger.Log("error", fmt.Sprintf("Failed to send to Discord: %v", err))
 					}
 					http.Error(w, "Failed to send message to Discord", http.StatusInternalServerError)
 					return
-				} else {
-					if globalLogArea != nil {
-						appendToLiveLogWithLevel(globalLogArea, "debug", "Message sent to Discord successfully")
-					}
+				}
+				if logger != nil {
+					logger.Log("debug", "Message sent to Discord successfully")
 				}
 			}
-			
-			if config.EnableLocalSave {
-				err := logToFile(config, sender, message)
+
+			if cfg.EnableLocalSave {
+				err := logToFile(&cfg, sender, message)
 				if err != nil {
 					log.Printf("Failed to log message to file: %v", err)
-					errorMsg := fmt.Sprintf("Failed to save to file: %v", err)
-					if globalLogArea != nil {
-						appendToLiveLogWithLevel(globalLogArea, "error", errorMsg)
+					if logger != nil {
+						logger.Log("error", fmt.Sprintf("Failed to save to file: %v", err))
 					}
-				} else {
-					if globalLogArea != nil {
-						appendToLiveLogWithLevel(globalLogArea, "debug", fmt.Sprintf("Message logged to %s file", config.FileFormat))
+				} else if logger != nil {
+					logger.Log("debug", fmt.Sprintf("Message logged to %s file", cfg.FileFormat))
+				}
+			}
+
+			if cfg.EnableHTTPForward {
+				err := forwardMessage(ctx, cfg.ForwardURL, sender, message, cfg.ForwardScene)
+				if err != nil {
+					log.Printf("Failed to forward message via HTTP: %v", err)
+					if logger != nil {
+						logger.Log("error", fmt.Sprintf("Failed to forward via HTTP: %v", err))
 					}
+				} else if logger != nil {
+					logger.Log("debug", "Message forwarded via HTTP successfully")
 				}
 			}
 		}
@@ -101,7 +149,8 @@ func createHandler(config *AppConfig) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Failed to encode response: %v", err)
+		}
 	}
 }
-

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,14 +12,19 @@ import (
 
 const discordMessageLimit = 2000
 
-func sendToDiscord(webhookURL, pingUser, sender, message string) error {
+var discordClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
+// sendToDiscord sends a chat message to a Discord webhook. If the message
+// exceeds Discord's character limit, it is split into multiple chunks.
+func sendToDiscord(ctx context.Context, webhookURL, pingUser, sender, message string) error {
 	timestamp := time.Now().Format("15:04:05")
 	if pingUser != "" {
 		pingUser = "<@" + pingUser + "> "
 	}
 	base := fmt.Sprintf("%s**[%s] %s:** \n", pingUser, timestamp, sender)
 
-	// Split the message into chunks
 	chunks := splitMessage(base, message, discordMessageLimit-len(base))
 
 	for _, chunk := range chunks {
@@ -28,37 +34,37 @@ func sendToDiscord(webhookURL, pingUser, sender, message string) error {
 
 		jsonData, err := json.Marshal(payload)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshaling discord payload: %w", err)
 		}
 
-		req, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
+		req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewBuffer(jsonData))
 		if err != nil {
-			return err
+			return fmt.Errorf("creating discord request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := discordClient.Do(req)
 		if err != nil {
-			return err
+			return fmt.Errorf("sending discord request: %w", err)
 		}
-		defer resp.Body.Close()
+		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusNoContent {
-			return fmt.Errorf("Discord API returned non-204 status code: %d", resp.StatusCode)
+			return fmt.Errorf("discord API returned non-204 status code: %d", resp.StatusCode)
 		}
 	}
 
 	return nil
 }
 
+// extractChunk splits a message at a word boundary within maxLength characters.
+// It returns the chunk and any remaining text. If the message fits within
+// maxLength, the remainder is empty.
 func extractChunk(msg string, maxLength int) (string, string) {
-	// If the entire message is shorter than maxLength, return it as is without '...'
 	if len(msg) < maxLength {
 		return msg, ""
 	}
 
-	// If it's exactly the maxLength, return '...' and the message as the remainder.
 	if len(msg) == maxLength {
 		return "...", "... " + msg
 	}
@@ -71,7 +77,6 @@ func extractChunk(msg string, maxLength int) (string, string) {
 		end--
 	}
 
-	// If no space was found in the maxLength, return '...' and the message as the remainder.
 	if end == 0 {
 		return "...", "... " + msg
 	}
@@ -82,6 +87,8 @@ func extractChunk(msg string, maxLength int) (string, string) {
 	return chunk, remainder
 }
 
+// splitMessage divides a message into Discord-safe chunks, each prefixed
+// with the given base string (containing timestamp and sender info).
 func splitMessage(base string, msg string, messageSize int) []string {
 	var chunks []string
 	remainingMessage := msg
