@@ -32,6 +32,15 @@ go build
 rp-chat-logger.exe
 ```
 
+**Optional: Reduce Antivirus False Positives**
+
+To embed a Windows manifest (reduces heuristic detection):
+
+1. Install rsrc: `go install github.com/akavel/rsrc@latest`
+2. Build with manifest: `rsrc -manifest rp-chat-logger.manifest -o rsrc.syso && go build && rm rsrc.syso`
+
+Or use the release script: `./release.sh 1.0.0` (manifest embedding is automatic if rsrc is available)
+
 ## Configuration
 
 Access the web UI to configure the application:
@@ -95,6 +104,13 @@ Or as form data:
 - Enable Debug Mode to see the Live Server Logs section
 - Make sure the ingestion server is running (green status indicator)
 - Check that messages are being sent to the correct server address and port
+
+**Antivirus warns about IDP.Generic or other threats**
+- This is a false positive. The executable is unsigned and performs network operations, which triggers heuristic detection
+- **Solution**: Whitelist the executable in your antivirus
+  - Windows Defender: Right-click file → Scan with Windows Defender → See detailed results → Allow on device
+  - Other antivirus: Look for "whitelist" or "exclude" options in your antivirus settings
+- **Long-term fix**: A code signing certificate would eliminate this, but isn't essential for personal use
 
 ## Support
 
