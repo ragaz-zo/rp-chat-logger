@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -15,44 +14,56 @@ type Logger interface {
 	Log(level, message string)
 }
 
-var (
-	server   *http.Server
-	serverMu sync.Mutex
-	serverWg sync.WaitGroup
-)
+// StartIngestionServer creates and starts the message ingestion HTTP server.
+func (a *App) StartIngestionServer() error {
+	a.ingestionMu.Lock()
+	defer a.ingestionMu.Unlock()
 
-// startServer creates and starts the HTTP server on the configured address.
-// It registers the /message endpoint and blocks until the server is shut down.
-func startServer(config *AppConfig, logger Logger) {
+	if a.ingestionRunning.Load() {
+		return fmt.Errorf("ingestion server already running")
+	}
+
+	a.configMu.RLock()
+	addr := a.config.ListenAddr
+	enableDiscord := a.config.EnableDiscord
+	enableLocalSave := a.config.EnableLocalSave
+	a.configMu.RUnlock()
+
+	// Prevent starting if neither output option is enabled
+	if !enableDiscord && !enableLocalSave {
+		return fmt.Errorf("cannot start server: no output options are enabled. Enable either Discord notifications or file logging")
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/message", createHandler(config, logger))
+	mux.HandleFunc("/message", createHandler(a))
 
-	addr := config.ListenAddr
-	log.Printf("Server started at http://%s/", addr)
-
-	serverMu.Lock()
-	server = &http.Server{
+	a.ingestionServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
-	serverMu.Unlock()
 
-	serverWg.Add(1)
-	defer serverWg.Done()
+	a.ingestionWg.Add(1)
+	a.ingestionRunning.Store(true)
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("Could not listen on %s: %v", addr, err)
-		if logger != nil {
-			logger.Log("error", fmt.Sprintf("Server failed: %v", err))
+	go func() {
+		defer a.ingestionWg.Done()
+		log.Printf("Ingestion server started at http://%s/", addr)
+		a.logger.Log("info", fmt.Sprintf("Ingestion server started on %s", addr))
+		if err := a.ingestionServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Could not listen on %s: %v", addr, err)
+			a.logger.Log("error", fmt.Sprintf("Server failed: %v", err))
 		}
-	}
+		a.ingestionRunning.Store(false)
+	}()
+
+	return nil
 }
 
-// serverShutdown gracefully shuts down the HTTP server with a 5-second timeout.
-func serverShutdown() error {
-	serverMu.Lock()
-	srv := server
-	serverMu.Unlock()
+// StopIngestionServer gracefully shuts down the message ingestion server.
+func (a *App) StopIngestionServer() error {
+	a.ingestionMu.Lock()
+	srv := a.ingestionServer
+	a.ingestionMu.Unlock()
 
 	if srv == nil {
 		return nil
@@ -62,91 +73,99 @@ func serverShutdown() error {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		return fmt.Errorf("shutting down server: %w", err)
+		return fmt.Errorf("shutting down ingestion server: %w", err)
 	}
 
-	serverWg.Wait()
-	log.Println("Server stopped.")
+	a.ingestionWg.Wait()
+	a.logger.Log("info", "Ingestion server stopped")
+	log.Println("Ingestion server stopped.")
 	return nil
 }
 
 // createHandler returns an HTTP handler that processes incoming chat messages
 // and routes them to Discord and/or local file logging based on the config.
-func createHandler(config *AppConfig, logger Logger) http.HandlerFunc {
+func createHandler(a *App) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
+		// Log incoming request details
+		if a.logger != nil {
+			a.logger.Log("debug", fmt.Sprintf("HTTP %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr))
+			a.logger.Log("debug", fmt.Sprintf("User-Agent: %s", r.UserAgent()))
+		}
+
 		// Snapshot config under read lock to avoid races with UI writes.
-		configMu.RLock()
-		cfg := *config
-		configMu.RUnlock()
+		a.configMu.RLock()
+		cfg := *a.config
+		a.configMu.RUnlock()
+
+		if a.logger != nil {
+			a.logger.Log("debug", fmt.Sprintf("Config: Discord=%v, LocalSave=%v, Path=%s, Format=%s",
+				cfg.EnableDiscord, cfg.EnableLocalSave, cfg.Path, cfg.FileFormat))
+		}
 
 		sender, message := parseMessage(r)
+		if a.logger != nil {
+			a.logger.Log("debug", fmt.Sprintf("Parsed: sender=%q, message=%q", sender, message))
+		}
+
 		if message != "" {
-			logMessage := fmt.Sprintf("Received message from %s: %s", sender, message)
-			if logger != nil {
-				logger.Log("debug", logMessage)
-			}
+			a.logger.Log("info", fmt.Sprintf("Message from %s: %s", sender, message))
 
 			if cfg.EnableDiscord {
-				err := sendToDiscord(ctx, cfg.WebhookURL, cfg.DiscordID, sender, message)
-				if err != nil {
-					log.Printf("Failed to send message to Discord: %v", err)
-					if logger != nil {
-						logger.Log("error", fmt.Sprintf("Failed to send to Discord: %v", err))
-					}
-					http.Error(w, "Failed to send message to Discord", http.StatusInternalServerError)
-					return
+				if a.logger != nil {
+					// Redact webhook URL for security, show only host
+					a.logger.Log("debug", "Sending to Discord webhook")
 				}
-				if logger != nil {
-					logger.Log("debug", "Message sent to Discord successfully")
+				rateLimited, retryAfter, err := sendToDiscord(ctx, cfg.WebhookURL, sender, message)
+				if err != nil {
+					if rateLimited {
+						// Queue for retry
+						a.discordQueue.Add(QueuedMessage{
+							WebhookURL: cfg.WebhookURL,
+							Sender:     sender,
+							Message:    message,
+							RetryAt:    time.Now().Add(retryAfter),
+							Attempts:   1,
+						})
+						if a.logger != nil {
+							a.logger.Log("info", fmt.Sprintf("Discord rate limited, message queued for retry in %v", retryAfter))
+						}
+					} else {
+						log.Printf("Failed to send message to Discord: %v", err)
+						if a.logger != nil {
+							a.logger.Log("error", fmt.Sprintf("Discord send failed: %v", err))
+							a.logger.LogFailure(sender, message, "discord", err.Error())
+						}
+					}
+					// Don't return error - game crashes on non-200 responses
+				} else if a.logger != nil {
+					a.logger.Log("debug", "Discord webhook returned success")
 				}
 			}
 
 			if cfg.EnableLocalSave {
+				fullPath := generateLogFilename(cfg.Path, cfg.FileFormat)
+				if a.logger != nil {
+					a.logger.Log("debug", fmt.Sprintf("Writing to file: %s", fullPath))
+				}
 				err := logToFile(&cfg, sender, message)
 				if err != nil {
 					log.Printf("Failed to log message to file: %v", err)
-					if logger != nil {
-						logger.Log("error", fmt.Sprintf("Failed to save to file: %v", err))
+					if a.logger != nil {
+						a.logger.Log("error", fmt.Sprintf("File write failed: %v", err))
+						a.logger.LogFailure(sender, message, "file", err.Error())
 					}
-				} else if logger != nil {
-					logger.Log("debug", fmt.Sprintf("Message logged to %s file", cfg.FileFormat))
+				} else if a.logger != nil {
+					a.logger.Log("debug", fmt.Sprintf("Wrote to %s successfully", fullPath))
 				}
 			}
-
-			if cfg.EnableHTTPForward {
-				err := forwardMessage(ctx, cfg.ForwardURL, sender, message, cfg.ForwardScene)
-				if err != nil {
-					log.Printf("Failed to forward message via HTTP: %v", err)
-					if logger != nil {
-						logger.Log("error", fmt.Sprintf("Failed to forward via HTTP: %v", err))
-					}
-				} else if logger != nil {
-					logger.Log("debug", "Message forwarded via HTTP successfully")
-				}
-			}
+		} else if a.logger != nil {
+			a.logger.Log("debug", "No message content, skipping processing")
 		}
 
-		response := map[string]interface{}{
-			"ManifestFileVersion": "000000000000",
-			"bIsFileData":         false,
-			"AppID":               "000000000000",
-			"AppNameString":       "",
-			"BuildVersionString":  "",
-			"LaunchExeString":     "",
-			"LaunchCommand":       "",
-			"PrereqIds":           []string{},
-			"PrereqName":          "",
-			"PrereqPath":          "",
-			"PrereqArgs":          "",
-			"FileManifestList":    []string{},
-			"ChunkHashList":       map[string]string{},
-			"ChunkShaList":        map[string]string{},
-			"DataGroupList":       map[string]string{},
-			"ChunkFilesizeList":   map[string]string{},
-			"CustomFields":        map[string]string{},
-		}
+		// Always responds 200 OK to prevent the game from crashing, even if there are internal errors.
+		response := map[string]string{"status": "ok"}
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {

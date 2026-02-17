@@ -1,0 +1,61 @@
+{{define "content"}}
+<header class="app-header">
+    <div class="header-info">
+        <div class="app-title-section">
+            <h1>RP Chat Logger</h1>
+            <p class="app-version">v{{.Version}}</p>
+            <p class="app-author">by <a href="https://github.com/ragaz-zo/rp-chat-logger" target="_blank">Ragazzo</a>, the rightful and original owner of hawk Tuah</p>
+        </div>
+    </div>
+    <div class="header-actions">
+        <div id="update-banner-container">
+            {{if .UpdateAvailable}}
+            <div class="update-badge">
+                <span>v{{.UpdateInfo.LatestVersion}} available</span>
+                <button class="btn btn-update btn-small" hx-post="/api/update/apply" hx-swap="innerHTML" hx-target="body" hx-confirm="This will download and apply the update, then restart the application. Continue?">Update</button>
+            </div>
+            {{end}}
+        </div>
+        <button class="btn btn-small" hx-post="/api/update/check" hx-target="#update-banner-container" hx-swap="innerHTML">Check for Updates</button>
+    </div>
+</header>
+
+<section class="status-section">
+    <div id="server-status">
+        {{template "status-indicator" .}}
+    </div>
+    <div class="controls">
+        <button class="btn btn-start" hx-post="/api/server/start" hx-target="#server-status" hx-swap="innerHTML">Start Server</button>
+        <button class="btn btn-stop" hx-post="/api/server/stop" hx-target="#server-status" hx-swap="innerHTML">Stop Server</button>
+        <button class="btn btn-shutdown" hx-post="/api/shutdown" hx-target="body" hx-swap="innerHTML" hx-confirm="Are you sure you want to shutdown the application?">Shutdown</button>
+    </div>
+</section>
+
+<section class="config-section">
+    <h2>Configuration</h2>
+    <div id="config-form-container">
+        {{template "config-form" .}}
+    </div>
+</section>
+
+{{if .Config.DebugMode}}
+<section class="log-section">
+    <h2>Live Server Logs</h2>
+    <div class="log-controls">
+        <button class="btn btn-small" onclick="document.getElementById('log-viewer').innerHTML=''">Clear Logs</button>
+    </div>
+    <div id="log-viewer" class="log-viewer" hx-ext="sse" sse-connect="/api/logs/stream" sse-swap="message" hx-swap="beforeend scroll:bottom">
+    </div>
+</section>
+
+<section class="failure-section">
+    <h2>Failed Messages</h2>
+    <div class="log-controls">
+        <button class="btn btn-small" onclick="document.getElementById('failure-viewer').innerHTML=''">Clear Failures</button>
+    </div>
+    <div id="failure-viewer" class="failure-viewer" hx-ext="sse" sse-connect="/api/failures/stream" sse-swap="message" hx-swap="beforeend scroll:bottom">
+    </div>
+</section>
+{{end}}
+
+{{end}}

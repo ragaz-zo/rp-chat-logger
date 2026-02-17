@@ -1,0 +1,6 @@
+{{define "status-indicator"}}
+<div class="status {{if .Running}}running{{else}}stopped{{end}}">
+    <span class="status-dot"></span>
+    <span>Server Status: {{.Message}}</span>
+</div>
+{{end}}

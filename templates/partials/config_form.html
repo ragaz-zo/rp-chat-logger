@@ -1,0 +1,125 @@
+{{define "config-form"}}
+<form id="config-form" hx-put="/api/config" hx-target="#config-form-container" hx-swap="innerHTML">
+    {{if .SaveSuccess}}
+    <div class="alert success">Configuration saved.</div>
+    {{end}}
+    {{if .SaveError}}
+    <div class="alert error">{{.SaveError}}</div>
+    {{end}}
+
+    <fieldset>
+        <legend>
+            <label><input type="checkbox" name="enableDiscord" {{if .Config.EnableDiscord}}checked{{end}}
+                onchange="document.getElementById('discord-fields').style.display=this.checked?'block':'none'; checkForChanges()"> Enable Discord Notifications</label>
+        </legend>
+        <div id="discord-fields" {{if not .Config.EnableDiscord}}style="display:none"{{end}}>
+            <label>Webhook URL:
+                <input type="text" name="webhookURL" value="{{.Config.WebhookURL}}" placeholder="Discord Webhook URL" onchange="checkForChanges()">
+            </label>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>
+            <label><input type="checkbox" name="enableLocalSave" {{if .Config.EnableLocalSave}}checked{{end}}
+                onchange="document.getElementById('localsave-fields').style.display=this.checked?'block':'none'; checkForChanges()"> Enable File Logging</label>
+        </legend>
+        <div id="localsave-fields" {{if not .Config.EnableLocalSave}}style="display:none"{{end}}>
+            <label>File path:
+                <input type="text" name="path" value="{{.Config.Path}}" placeholder="/path/to/logs" onchange="checkForChanges()">
+            </label>
+            <label>Format:
+                <select name="fileFormat" onchange="checkForChanges()">
+                    <option value="txt" {{if eq .Config.FileFormat "txt"}}selected{{end}}>txt</option>
+                    <option value="csv" {{if eq .Config.FileFormat "csv"}}selected{{end}}>csv</option>
+                    <option value="json" {{if eq .Config.FileFormat "json"}}selected{{end}}>json</option>
+                    <option value="docx" {{if eq .Config.FileFormat "docx"}}selected{{end}}>docx</option>
+                </select>
+            </label>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Server Settings</legend>
+        <label>Listen Address:
+            <input type="text" name="listenAddr" value="{{.Config.ListenAddr}}" placeholder="127.0.0.1:3000" onchange="checkForChanges()">
+        </label>
+        <div class="checkbox-row">
+            <label><input type="checkbox" name="autoStart" {{if .Config.AutoStart}}checked{{end}} onchange="checkForChanges()"> Auto Start Server</label>
+            <label><input type="checkbox" name="debugMode" {{if .Config.DebugMode}}checked{{end}} onchange="checkForChanges(); toggleDebugSections()"> Debug Mode</label>
+        </div>
+    </fieldset>
+
+    <div id="unsaved-indicator" style="display:none; margin-top: 16px;">
+        <div class="alert warning">Unsaved changes</div>
+        <button type="submit" class="btn btn-save">Save Configuration</button>
+    </div>
+</form>
+
+<script>
+let initialConfig = {};
+
+function captureInitialState() {
+    const form = document.getElementById('config-form');
+    if (!form) return;
+    initialConfig = {
+        enableDiscord: form.elements['enableDiscord'].checked,
+        webhookURL: form.elements['webhookURL'].value,
+        enableLocalSave: form.elements['enableLocalSave'].checked,
+        path: form.elements['path'].value,
+        fileFormat: form.elements['fileFormat'].value,
+        listenAddr: form.elements['listenAddr'].value,
+        autoStart: form.elements['autoStart'].checked,
+        debugMode: form.elements['debugMode'].checked
+    };
+    // Hide indicator when state is captured (config just loaded/saved)
+    const indicator = document.getElementById('unsaved-indicator');
+    if (indicator) {
+        indicator.style.display = 'none';
+    }
+    // Update debug sections visibility
+    toggleDebugSections();
+}
+
+function checkForChanges() {
+    const form = document.getElementById('config-form');
+    if (!form) return;
+
+    const hasChanges =
+        (form.elements['enableDiscord'].checked !== initialConfig.enableDiscord) ||
+        (form.elements['webhookURL'].value !== initialConfig.webhookURL) ||
+        (form.elements['enableLocalSave'].checked !== initialConfig.enableLocalSave) ||
+        (form.elements['path'].value !== initialConfig.path) ||
+        (form.elements['fileFormat'].value !== initialConfig.fileFormat) ||
+        (form.elements['listenAddr'].value !== initialConfig.listenAddr) ||
+        (form.elements['autoStart'].checked !== initialConfig.autoStart) ||
+        (form.elements['debugMode'].checked !== initialConfig.debugMode);
+
+    const indicator = document.getElementById('unsaved-indicator');
+    if (indicator) {
+        indicator.style.display = hasChanges ? 'block' : 'none';
+    }
+}
+
+function toggleDebugSections() {
+    const form = document.getElementById('config-form');
+    if (!form) return;
+
+    const debugMode = form.elements['debugMode'].checked;
+    const logSection = document.querySelector('.log-section');
+    const failureSection = document.querySelector('.failure-section');
+
+    if (logSection) {
+        logSection.style.display = debugMode ? 'block' : 'none';
+    }
+    if (failureSection) {
+        failureSection.style.display = debugMode ? 'block' : 'none';
+    }
+}
+
+// Capture initial state immediately and after HTMX swaps
+captureInitialState();
+document.addEventListener('DOMContentLoaded', captureInitialState);
+document.addEventListener('htmx:afterSwap', captureInitialState);
+</script>
+{{end}}

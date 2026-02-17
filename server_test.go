@@ -9,17 +9,28 @@ import (
 	"testing"
 )
 
-func setupTestConfig() *AppConfig {
-	return &AppConfig{
+func setupTestApp() *App {
+	config := &AppConfig{
 		ListenAddr:      "127.0.0.1:3000",
 		FileFormat:      "txt",
 		EnableDiscord:   false,
 		EnableLocalSave: false,
 	}
+	broker := NewSSEBroker()
+	failureBroker := NewSSEBroker()
+	logger := NewSSELogger(broker, failureBroker)
+
+	return &App{
+		config:        config,
+		sseBroker:     broker,
+		failureBroker: failureBroker,
+		logger:        logger,
+	}
 }
 
 func TestCreateHandler_NoMessage(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 	req, err := http.NewRequest("GET", "/message", nil)
 	if err != nil {
@@ -27,7 +38,7 @@ func TestCreateHandler_NoMessage(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
@@ -40,8 +51,8 @@ func TestCreateHandler_NoMessage(t *testing.T) {
 		t.Errorf("Handler returned invalid JSON: %v", err)
 	}
 
-	if _, ok := response["ManifestFileVersion"]; !ok {
-		t.Error("Response missing ManifestFileVersion field")
+	if status, ok := response["status"]; !ok || status != "ok" {
+		t.Error("Response missing or invalid status field")
 	}
 }
 
@@ -75,7 +86,8 @@ func TestCreateHandler_MessageParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := setupTestConfig()
+			a := setupTestApp()
+			defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 			req, err := http.NewRequest("GET", tt.url, nil)
 			if err != nil {
@@ -83,7 +95,7 @@ func TestCreateHandler_MessageParams(t *testing.T) {
 			}
 
 			recorder := httptest.NewRecorder()
-			handlerFunc := createHandler(config, nil)
+			handlerFunc := createHandler(a)
 			handlerFunc.ServeHTTP(recorder, req)
 
 			if status := recorder.Code; status != tt.expectedStatus {
@@ -99,7 +111,8 @@ func TestCreateHandler_MessageParams(t *testing.T) {
 }
 
 func TestCreateHandler_WithLocalSave(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 	tmpDir, err := os.MkdirTemp("", "rp-chat-logger-test")
 	if err != nil {
@@ -107,9 +120,9 @@ func TestCreateHandler_WithLocalSave(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	config.EnableLocalSave = true
-	config.Path = tmpDir
-	config.FileFormat = "txt"
+	a.config.EnableLocalSave = true
+	a.config.Path = tmpDir
+	a.config.FileFormat = "txt"
 
 	req, err := http.NewRequest("GET", "/message?sender=TestUser&message=Hello+World", nil)
 	if err != nil {
@@ -117,7 +130,7 @@ func TestCreateHandler_WithLocalSave(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
@@ -136,11 +149,12 @@ func TestCreateHandler_WithLocalSave(t *testing.T) {
 }
 
 func TestCreateHandler_LocalSaveInvalidPath(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
-	config.EnableLocalSave = true
-	config.Path = "/nonexistent/invalid/path/that/should/not/exist"
-	config.FileFormat = "txt"
+	a.config.EnableLocalSave = true
+	a.config.Path = "/nonexistent/invalid/path/that/should/not/exist"
+	a.config.FileFormat = "txt"
 
 	req, err := http.NewRequest("GET", "/message?sender=TestUser&message=Hello+World", nil)
 	if err != nil {
@@ -148,7 +162,7 @@ func TestCreateHandler_LocalSaveInvalidPath(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
@@ -159,7 +173,8 @@ func TestCreateHandler_LocalSaveInvalidPath(t *testing.T) {
 }
 
 func TestCreateHandler_ResponseFields(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 	req, err := http.NewRequest("GET", "/message", nil)
 	if err != nil {
@@ -167,7 +182,7 @@ func TestCreateHandler_ResponseFields(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
@@ -176,35 +191,14 @@ func TestCreateHandler_ResponseFields(t *testing.T) {
 		t.Fatalf("Handler returned invalid JSON: %v", err)
 	}
 
-	expectedFields := []string{
-		"ManifestFileVersion",
-		"bIsFileData",
-		"AppID",
-		"AppNameString",
-		"BuildVersionString",
-		"LaunchExeString",
-		"LaunchCommand",
-		"PrereqIds",
-		"PrereqName",
-		"PrereqPath",
-		"PrereqArgs",
-		"FileManifestList",
-		"ChunkHashList",
-		"ChunkShaList",
-		"DataGroupList",
-		"ChunkFilesizeList",
-		"CustomFields",
-	}
-
-	for _, field := range expectedFields {
-		if _, ok := response[field]; !ok {
-			t.Errorf("Response missing expected field: %s", field)
-		}
+	if status, ok := response["status"]; !ok || status != "ok" {
+		t.Error("Response missing or invalid status field")
 	}
 }
 
 func TestCreateHandler_ContentType(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 	req, err := http.NewRequest("GET", "/message", nil)
 	if err != nil {
@@ -212,7 +206,7 @@ func TestCreateHandler_ContentType(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
@@ -223,7 +217,8 @@ func TestCreateHandler_ContentType(t *testing.T) {
 }
 
 func TestCreateHandler_DocxFormat(t *testing.T) {
-	config := setupTestConfig()
+	a := setupTestApp()
+	defer func() { a.sseBroker.Stop(); a.failureBroker.Stop() }()
 
 	tmpDir, err := os.MkdirTemp("", "rp-chat-logger-test")
 	if err != nil {
@@ -231,9 +226,9 @@ func TestCreateHandler_DocxFormat(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	config.EnableLocalSave = true
-	config.Path = tmpDir
-	config.FileFormat = "docx"
+	a.config.EnableLocalSave = true
+	a.config.Path = tmpDir
+	a.config.FileFormat = "docx"
 
 	req, err := http.NewRequest("GET", "/message?sender=TestUser&message=Hello+World", nil)
 	if err != nil {
@@ -241,7 +236,7 @@ func TestCreateHandler_DocxFormat(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handlerFunc := createHandler(config, nil)
+	handlerFunc := createHandler(a)
 
 	handlerFunc.ServeHTTP(recorder, req)
 
