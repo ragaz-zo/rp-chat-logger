@@ -42,8 +42,19 @@
     <fieldset>
         <legend>Server Settings</legend>
         <label>Listen Address:
-            <input type="text" name="listenAddr" value="{{.Config.ListenAddr}}" placeholder="127.0.0.1:3000" onchange="checkForChanges()">
+            <input type="text" name="listenAddr" value="{{.Config.ListenAddr}}" placeholder="localhost:3000" onchange="checkForChanges(); updateWebhookUrl()">
         </label>
+
+        <div id="webhook-setup-info" style="margin-top: 12px; padding: 12px; background-color: #f5f5f5; border-left: 3px solid #0066cc; border-radius: 4px;">
+            <p style="margin: 0 0 8px 0; font-weight: bold;">In-Game Setup Instructions:</p>
+            <ol style="margin: 8px 0; padding-left: 20px;">
+                <li>Open Sudo player panel</li>
+                <li>Go to Chat &amp; UI Settings</li>
+                <li>Set the webhook URL to: <code style="background-color: white; padding: 2px 4px; border-radius: 2px; font-family: monospace;" id="webhook-url-display">http://localhost:3000/message</code></li>
+                <li>Click to copy and save</li>
+            </ol>
+        </div>
+
         <div class="checkbox-row">
             <label><input type="checkbox" name="autoStart" {{if .Config.AutoStart}}checked{{end}} onchange="checkForChanges()"> Auto Start Server</label>
             <label><input type="checkbox" name="debugMode" {{if .Config.DebugMode}}checked{{end}} onchange="checkForChanges(); toggleDebugSections()"> Debug Mode</label>
@@ -117,9 +128,27 @@ function toggleDebugSections() {
     }
 }
 
+function updateWebhookUrl() {
+    const form = document.getElementById('config-form');
+    if (!form) return;
+
+    let listenAddr = form.elements['listenAddr'].value || 'localhost:3000';
+    const webhookDisplay = document.getElementById('webhook-url-display');
+    if (webhookDisplay) {
+        webhookDisplay.textContent = 'http://' + listenAddr + '/message';
+    }
+}
+
 // Capture initial state immediately and after HTMX swaps
 captureInitialState();
-document.addEventListener('DOMContentLoaded', captureInitialState);
-document.addEventListener('htmx:afterSwap', captureInitialState);
+updateWebhookUrl();
+document.addEventListener('DOMContentLoaded', function() {
+    captureInitialState();
+    updateWebhookUrl();
+});
+document.addEventListener('htmx:afterSwap', function() {
+    captureInitialState();
+    updateWebhookUrl();
+});
 </script>
 {{end}}
