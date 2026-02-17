@@ -74,25 +74,11 @@ fi
 echo "✓ Commits and tags pushed"
 echo ""
 
-# Step 4: Create GitHub release
-echo "Step 4: Creating GitHub release..."
-
-# Check if release already exists
-if gh release view $TAG >/dev/null 2>&1; then
-    echo "Release $TAG already exists on GitHub, skipping release creation"
-else
-    gh release create $TAG rp-chat-logger.exe \
-        --title "Release $VERSION" \
-        --notes "Release version $VERSION of RP Chat Logger"
-
-    if [ $? -ne 0 ]; then
-        echo "Release creation failed!"
-        exit 1
-    fi
-    echo "✓ Release created on GitHub"
-fi
-echo ""
-
 echo "=== Release Complete! ==="
 echo "Version: $VERSION"
-echo "Release URL: https://github.com/ragaz-zo/rp-chat-logger/releases/tag/$TAG"
+echo ""
+echo "Next step: Create the GitHub release manually at:"
+echo "https://github.com/ragaz-zo/rp-chat-logger/releases/new?tag=$TAG"
+echo ""
+echo "Or run this command once gh CLI is properly authenticated:"
+echo "gh release create $TAG rp-chat-logger.exe --title \"Release $VERSION\" --notes \"Release version $VERSION of RP Chat Logger\""
