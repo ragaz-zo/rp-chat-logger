@@ -21,19 +21,18 @@ echo ""
 echo "Step 1: Building for Windows..."
 
 # Try to embed manifest if rsrc is available (reduces antivirus false positives)
-BUILD_FLAGS="-ldflags \"-X main.Version=$VERSION\""
 if command -v rsrc &> /dev/null; then
     echo "  - Embedding Windows manifest..."
     rsrc -manifest rp-chat-logger.manifest -o rsrc.syso
     if [ $? -eq 0 ]; then
-        GOOS=windows GOARCH=amd64 go build $BUILD_FLAGS -o rp-chat-logger.exe
+        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=$VERSION" -o rp-chat-logger.exe
         rm -f rsrc.syso
     else
         echo "  - Manifest embedding failed, building without it..."
-        GOOS=windows GOARCH=amd64 go build $BUILD_FLAGS -o rp-chat-logger.exe
+        GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=$VERSION" -o rp-chat-logger.exe
     fi
 else
-    GOOS=windows GOARCH=amd64 go build $BUILD_FLAGS -o rp-chat-logger.exe
+    GOOS=windows GOARCH=amd64 go build -ldflags "-X main.Version=$VERSION" -o rp-chat-logger.exe
 fi
 
 if [ $? -ne 0 ]; then
