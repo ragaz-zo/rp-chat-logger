@@ -60,12 +60,18 @@ else
     fi
 fi
 
-gh repo sync --branch main
+git push
 if [ $? -ne 0 ]; then
     echo "Push failed!"
     exit 1
 fi
-echo "✓ Tag and commits pushed"
+
+git push --tags
+if [ $? -ne 0 ]; then
+    echo "Push tags failed!"
+    exit 1
+fi
+echo "✓ Commits and tags pushed"
 echo ""
 
 # Step 4: Create GitHub release
