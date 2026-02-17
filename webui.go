@@ -7,6 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 )
 
@@ -43,6 +46,9 @@ func (a *App) StartWebUI() error {
 	mux.HandleFunc("GET /api/update/info", a.handleUpdateInfo)
 	mux.HandleFunc("POST /api/update/check", a.handleUpdateCheck)
 	mux.HandleFunc("POST /api/update/apply", a.handleUpdateApply)
+
+	// Dialog endpoints
+	mux.HandleFunc("GET /api/dialog/select-folder", a.handleSelectFolder)
 
 	a.webServer = &http.Server{
 		Addr:    a.webAddr,
@@ -513,4 +519,51 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 			a.logger.Log("error", fmt.Sprintf("Update failed: %v", err))
 		}
 	}()
+}
+
+// handleSelectFolder opens a native folder picker and returns the selected path.
+func (a *App) handleSelectFolder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Use os/exec to open the native file picker
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		// Windows: Use PowerShell to open folder picker
+		cmd = exec.CommandContext(r.Context(),
+			"powershell", "-NoProfile", "-Command",
+			`Add-Type -AssemblyName System.Windows.Forms; `+
+				`$folder = New-Object System.Windows.Forms.FolderBrowserDialog; `+
+				`if ($folder.ShowDialog() -eq 'OK') { Write-Host $folder.SelectedPath }`)
+	case "darwin":
+		// macOS: Use osascript to open file picker
+		cmd = exec.CommandContext(r.Context(),
+			"osascript", "-e",
+			`tell application "System Events" to choose folder`)
+	case "linux":
+		// Linux: Use zenity if available
+		cmd = exec.CommandContext(r.Context(), "zenity", "--file-selection", "--directory")
+	default:
+		fmt.Fprintf(w, `{"error":"Folder picker not supported on %s"}`, runtime.GOOS)
+		return
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(w, `{"error":"User cancelled or error occurred"}`)
+		return
+	}
+
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		fmt.Fprintf(w, `{"error":"No folder selected"}`)
+		return
+	}
+
+	// On macOS, osascript returns a file URL, convert to path
+	if runtime.GOOS == "darwin" && strings.HasPrefix(path, "file://") {
+		path = strings.TrimPrefix(path, "file://")
+	}
+
+	fmt.Fprintf(w, `{"path":"%s"}`, path)
 }

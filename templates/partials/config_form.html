@@ -26,7 +26,10 @@
         </legend>
         <div id="localsave-fields" {{if not .Config.EnableLocalSave}}style="display:none"{{end}}>
             <label>File path:
-                <input type="text" name="path" value="{{.Config.Path}}" placeholder="/path/to/logs" onchange="checkForChanges()">
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" name="path" value="{{.Config.Path}}" placeholder="Click 'Browse' to select folder" onchange="checkForChanges()" style="flex: 1;">
+                    <button type="button" class="btn btn-small" onclick="selectFolder()">Browse</button>
+                </div>
             </label>
             <label>Format:
                 <select name="fileFormat" onchange="checkForChanges()">
@@ -45,12 +48,12 @@
             <input type="text" name="listenAddr" value="{{.Config.ListenAddr}}" placeholder="localhost:3000" onchange="checkForChanges(); updateWebhookUrl()">
         </label>
 
-        <div id="webhook-setup-info" style="margin-top: 12px; padding: 12px; background-color: #f5f5f5; border-left: 3px solid #0066cc; border-radius: 4px;">
+        <div id="webhook-setup-info" style="margin-top: 12px;">
             <p style="margin: 0 0 8px 0; font-weight: bold;">In-Game Setup Instructions:</p>
             <ol style="margin: 8px 0; padding-left: 20px;">
                 <li>Open Sudo player panel</li>
                 <li>Go to Chat &amp; UI Settings</li>
-                <li>Set the webhook URL to: <code style="background-color: white; padding: 2px 4px; border-radius: 2px; font-family: monospace;" id="webhook-url-display">http://localhost:3000/message</code></li>
+                <li>Set the webhook URL to: <code style="font-family: monospace;" id="webhook-url-display">http://localhost:3000/message</code></li>
                 <li>Click to copy and save</li>
             </ol>
         </div>
@@ -137,6 +140,26 @@ function updateWebhookUrl() {
     if (webhookDisplay) {
         webhookDisplay.textContent = 'http://' + listenAddr + '/message';
     }
+}
+
+function selectFolder() {
+    fetch('/api/dialog/select-folder')
+        .then(response => response.json())
+        .then(data => {
+            if (data.path) {
+                const form = document.getElementById('config-form');
+                if (form) {
+                    form.elements['path'].value = data.path;
+                    checkForChanges();
+                }
+            } else if (data.error) {
+                alert('Error selecting folder: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to open folder picker');
+        });
 }
 
 // Capture initial state immediately and after HTMX swaps

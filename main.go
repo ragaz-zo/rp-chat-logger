@@ -121,6 +121,8 @@ func main() {
 		config.FileFormat = "txt"
 	}
 
+	log.Printf("Using config file: %s", getConfigPath())
+
 	application := NewApp(config, *webAddr)
 
 	// Cleanup old binary from previous update (Windows)
