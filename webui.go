@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -151,7 +152,17 @@ func (a *App) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		"Config": cfg,
 	}
 
-	if err := saveConfiguration(&cfg); err != nil {
+	// Validate configuration
+	if !cfg.EnableDiscord && !cfg.EnableLocalSave {
+		a.logger.Log("debug", "Config validation failed: no output options enabled")
+		data["SaveError"] = "Enable at least one output option"
+	} else if cfg.EnableDiscord && cfg.WebhookURL == "" {
+		a.logger.Log("debug", "Config validation failed: Discord enabled but no webhook URL")
+		data["SaveError"] = "Discord webhook URL required"
+	} else if cfg.EnableLocalSave && cfg.Path == "" {
+		a.logger.Log("debug", "Config validation failed: Local save enabled but no path")
+		data["SaveError"] = "File path required for local save"
+	} else if err := saveConfiguration(&cfg); err != nil {
 		a.logger.Log("error", fmt.Sprintf("Failed to save config: %v", err))
 		data["SaveError"] = "Failed to save configuration"
 	} else {
@@ -544,19 +555,19 @@ func (a *App) handleSelectFolder(w http.ResponseWriter, r *http.Request) {
 		// Linux: Use zenity if available
 		cmd = exec.CommandContext(r.Context(), "zenity", "--file-selection", "--directory")
 	default:
-		fmt.Fprintf(w, `{"error":"Folder picker not supported on %s"}`, runtime.GOOS)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Folder picker not supported on %s", runtime.GOOS)})
 		return
 	}
 
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Fprintf(w, `{"error":"User cancelled or error occurred"}`)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User cancelled or error occurred"})
 		return
 	}
 
 	path := strings.TrimSpace(string(output))
 	if path == "" {
-		fmt.Fprintf(w, `{"error":"No folder selected"}`)
+		json.NewEncoder(w).Encode(map[string]string{"error": "No folder selected"})
 		return
 	}
 
@@ -565,5 +576,5 @@ func (a *App) handleSelectFolder(w http.ResponseWriter, r *http.Request) {
 		path = strings.TrimPrefix(path, "file://")
 	}
 
-	fmt.Fprintf(w, `{"path":"%s"}`, path)
+	json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
